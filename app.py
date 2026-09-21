@@ -8,30 +8,30 @@ import yfinance as yf
 # 1. 頁面基本配置
 # ==========================================
 st.set_page_config(
-    page_title="銘傳金融科技盃 - 台股 ETF AI 每日交易決策儀表板",
+    page_title="銘傳金融科技盃 - 5大核心台股 ETF AI 交易儀表板",
     page_icon="📈",
     layout="wide",
 )
 
-st.title("🏆 銘傳金融科技盃 - 台股 ETF AI 每日買賣決策儀表板")
-st.caption("支援當日庫存再平衡 (Rebalancing) | 自動產出買進/賣出/續抱指令")
+st.title("🏆 銘傳金融科技盃 - 5 大核心 ETF 每日 Rebalancing 決策系統")
+st.caption("精選 5 檔主力 ETF (0050 / 00881 / 00713 / 00919 / 00679B) | 當日具體買賣張數試算")
 st.markdown("---")
 
 # ==========================================
-# 2. 側邊欄：市場數據與競賽階段設定
+# 2. 側邊欄：風控與市場籌碼指標
 # ==========================================
-st.sidebar.header("⚙️ 1. 比賽階段與風控設定")
+st.sidebar.header("⚙️ 1. 比賽進度與持股風控")
 build_phase = st.sidebar.selectbox(
     "選擇目前比賽建倉階段",
     [
-        "第 1 階段：試探開局 (持股上限 30%)",
+        "第 1 階段：開局試探 (持股上限 30%)",
         "第 2 階段：波段建倉 (持股上限 60%)",
         "第 3 階段：完全佈局 (最高持股 80%，保留 20% 防禦現金)",
     ],
 )
 
 phase_max_exposure = {
-    "第 1 階段：試探開局 (持股上限 30%)": 0.30,
+    "第 1 階段：開局試探 (持股上限 30%)": 0.30,
     "第 2 階段：波段建倉 (持股上限 60%)": 0.60,
     "第 3 階段：完全佈局 (最高持股 80%，保留 20% 防禦現金)": 0.80,
 }[build_phase]
@@ -44,87 +44,72 @@ pc_ratio = st.sidebar.slider("選擇權 Put/Call Ratio (%)", 50, 150, 105, step=
 discount_rate = st.sidebar.slider("目標 ETF 折溢價率 (%)", -2.0, 2.0, 0.2, step=0.1)
 
 # ==========================================
-# 3. 主頁面：輸入「目前實際庫存與現金」
+# 3. 主頁面：輸入帳戶當前實際庫存
 # ==========================================
 st.markdown("### 💼 請輸入目前團隊「實際帳戶庫存」")
-st.caption("請填入目前手上的現金餘額與各檔 ETF 的當前市值，AI 將自動比對差異計算今日下單量。")
+st.caption("填入今日帳戶內的現金餘額與各檔 ETF 當前市值 (未持有填 0)。")
 
 col_cash, col_h1, col_h2, col_h3, col_h4, col_h5 = st.columns(6)
 with col_cash:
-    cur_cash = st.number_input("當前現金餘額 (元)", value=10000000, step=100000)
+    cur_cash = st.number_input("現金餘額 (元)", value=10000000, step=100000)
 with col_h1:
     cur_0050 = st.number_input("0050 現有市值", value=0, step=50000)
 with col_h2:
     cur_00881 = st.number_input("00881 現有市值", value=0, step=50000)
 with col_h3:
-    cur_0056 = st.number_input("0056 現有市值", value=0, step=50000)
-with col_h4:
     cur_00713 = st.number_input("00713 現有市值", value=0, step=50000)
+with col_h4:
+    cur_00919 = st.number_input("00919 現有市值", value=0, step=50000)
 with col_h5:
     cur_00679b = st.number_input("00679B 現有市值", value=0, step=50000)
 
 # 計算總資產淨值 (NAV)
-total_portfolio_value = cur_cash + cur_0050 + cur_00881 + cur_0056 + cur_00713 + cur_00679b
-
-st.info(f"💰 **目前總資產淨值 (NAV)**：NT$ {total_portfolio_value:,.0f} 元")
+nav = cur_cash + cur_0050 + cur_00881 + cur_00713 + cur_00919 + cur_00679b
+st.info(f"💰 **目前總資產淨值 (NAV)**：NT$ {nav:,.0f} 元")
 st.markdown("---")
 
 # ==========================================
-# 4. AI 多因子綜合打分邏輯
+# 4. AI 因子打分與目標配置計算
 # ==========================================
 taiex_score = 40 if taiex_close > taiex_ma20 else 10
-
-if foreign_futures_oi > 10000:
-    futures_score = 30
-elif foreign_futures_oi < -10000:
-    futures_score = 0
-else:
-    futures_score = 15
-
-if pc_ratio >= 110:
-    option_score = 30
-elif pc_ratio <= 85:
-    option_score = 5
-else:
-    option_score = 18
-
+futures_score = 30 if foreign_futures_oi > 10000 else (0 if foreign_futures_oi < -10000 else 15)
+option_score = 30 if pc_ratio >= 110 else (5 if pc_ratio <= 85 else 18)
 total_score = taiex_score + futures_score + option_score
 
-# 定義多空決策與細分 ETF 權重 (拆解至具體單一 ETF)
 if total_score >= 75:
-    status = "【強勢多頭】動態加碼攻擊"
+    status = "【強勢多頭】全面偏多攻擊"
     status_color = "red"
-    # 科技 50% (0050:30%, 00881:20%), 高股息 30% (0056:15%, 00713:15%), 債券/現金 20%
-    target_weights = {"0050": 0.30, "00881": 0.20, "0056": 0.15, "00713": 0.15, "00679B": 0.00}
+    base_weights = {"0050": 0.30, "00881": 0.25, "00713": 0.15, "00919": 0.10, "00679B": 0.00}
 elif total_score <= 40:
-    status = "【空頭防禦】減碼保住獲利"
+    status = "【空頭防禦】減碼保住勝果"
     status_color = "green"
-    # 科技 10% (0050:10%), 高股息 30% (0056:15%, 00713:15%), 債券 10%, 現金 50%
-    target_weights = {"0050": 0.10, "00881": 0.00, "0056": 0.15, "00713": 0.15, "00679B": 0.10}
+    base_weights = {"0050": 0.05, "00881": 0.00, "00713": 0.20, "00919": 0.10, "00679B": 0.15}
 else:
-    status = "【震盪整理】區間操作避險"
+    status = "【震盪整理】高股息防禦避險"
     status_color = "orange"
-    # 科技 30% (0050:20%, 00881:10%), 高股息 40% (0056:20%, 00713:20%), 現金 30%
-    target_weights = {"0050": 0.20, "00881": 0.10, "0056": 0.20, "00713": 0.20, "00679B": 0.00}
+    base_weights = {"0050": 0.15, "00881": 0.10, "00713": 0.25, "00919": 0.20, "00679B": 0.00}
 
-# 套用建倉階段上限風控
-sum_stock_w = sum(target_weights.values())
-if sum_stock_w > phase_max_exposure:
-    scale = phase_max_exposure / sum_stock_w
-    target_weights = {k: v * scale for k, v in target_weights.items()}
+# 強制風控限制：總持股權重不得高於階段上限
+total_stock_w = sum(base_weights.values())
+if total_stock_w > phase_max_exposure:
+    scale = phase_max_exposure / total_stock_w
+    target_weights = {k: v * scale for k, v in base_weights.items()}
+else:
+    target_weights = base_weights
+
+target_weights["現金"] = 1.0 - sum(target_weights.values())
 
 # ==========================================
-# 5. 計算當日再平衡與買賣指令 (Rebalancing Engine)
+# 5. 抓取股價與算牌引擎 (Rebalancing)
 # ==========================================
 etf_tickers = {
     "0050": "0050.TW",
     "00881": "00881.TW",
-    "0056": "0056.TW",
     "00713": "00713.TW",
+    "00919": "00919.TW",
     "00679B": "00679B.TWO"
 }
 
-# 抓取最新單價（用來估算買賣張數）
 @st.cache_data(ttl=60)
 def get_latest_prices():
     prices = {}
@@ -133,35 +118,32 @@ def get_latest_prices():
             df = yf.download(ticker, period="2d")["Close"]
             prices[code] = float(df.iloc[-1])
         except:
-            prices[code] = 100.0  # 抓取失敗時預設備用價格
+            prices[code] = 100.0  # 預備預設價格
     return prices
 
 latest_prices = get_latest_prices()
-
 current_holdings = {
     "0050": cur_0050,
     "00881": cur_00881,
-    "0056": cur_0056,
     "00713": cur_00713,
+    "00919": cur_00919,
     "00679B": cur_00679b
 }
 
 trade_suggestions = []
-rebalance_threshold = 30000  # 風控：調倉門檻 3 萬元，低於 3 萬元不動作以節省交易成本
+threshold = 30000  # 風控：低於 3 萬元微幅差異不調倉，減少手續費磨損
 
-for code in target_weights.keys():
-    target_amt = total_portfolio_value * target_weights[code]
+for code, price in latest_prices.items():
+    target_amt = nav * target_weights[code]
     cur_amt = current_holdings[code]
     delta = target_amt - cur_amt
-    price = latest_prices.get(code, 100.0)
     
-    # 判斷買賣動作
-    if delta > rebalance_threshold:
+    if delta > threshold:
         action = "🟢 加碼買進"
         trade_amt = delta
-        shares = int(trade_amt / (price * 1000))  # 計算張數 (1張 = 1000股)
-    elif delta < -rebalance_threshold:
-        action = "🔴 減碼獲利/停損"
+        shares = int(trade_amt / (price * 1000))
+    elif delta < -threshold:
+        action = "🔴 減碼賣出"
         trade_amt = abs(delta)
         shares = int(trade_amt / (price * 1000))
     else:
@@ -170,43 +152,60 @@ for code in target_weights.keys():
         shares = 0
         
     trade_suggestions.append({
-        "標的代號": code,
-        "最新參考單價": f"NT$ {price:.2f}",
-        "目前庫存金額": cur_amt,
-        "AI 當日目標金額": target_amt,
-        "當日交易建議": action,
-        "建議調整金額": trade_amt,
-        "預估交易張數": f"{shares} 張" if shares > 0 else "-"
+        "標的": f"{code}",
+        "最新單價": f"NT$ {price:.2f}",
+        "目前持股金額": cur_amt,
+        "AI 目標金額": target_amt,
+        "當日交易指令": action,
+        "建議調倉金額": trade_amt,
+        "建議下單張數": f"{shares} 張" if shares > 0 else "-"
     })
 
 df_trade = pd.DataFrame(trade_suggestions)
 
 # ==========================================
-# 6. 視覺化呈現與當日指令輸出
+# 6. 視覺化儀表板呈現
 # ==========================================
-st.markdown("### 🎯 今日 AI 具體交易指令 (Rebalancing Signal)")
-
 col_m1, col_m2, col_m3 = st.columns(3)
 with col_m1:
     st.metric("台股 AI 綜合分數", f"{total_score} / 100")
 with col_m2:
     st.subheader(f":{status_color}[{status}]")
+    st.caption(f"風控限制：目前最高總持股上限為 {phase_max_exposure*100:.0f}%")
 with col_m3:
     if discount_rate > 0.8:
-        st.error(f"⚠️ 風控警示：折溢價過高 ({discount_rate}%)，暫緩追高買進！")
+        st.error(f"⚠️ 警示：溢價高達 {discount_rate}%，暫緩追高進場！")
     elif discount_rate < -0.5:
-        st.success(f"💡 套利訊號：折價 ({discount_rate}%)，出現抄底買點！")
+        st.success(f"💡 訊號：折價 {discount_rate}%，出現錯殺抄底空間！")
     else:
-        st.info("ℹ️ 折溢價處於正常安全區間")
+        st.info("ℹ️ 折溢價處於正常合理區間")
 
-# 顯示當日買賣建議表格
-st.dataframe(
-    df_trade.style.format({
-        "目前庫存金額": "NT$ {:,.0f}",
-        "AI 當日目標金額": "NT$ {:,.0f}",
-        "建議調整金額": "NT$ {:,.0f}"
-    }),
-    use_container_width=True
-)
+st.markdown("### 🎯 今日 5 大核心 ETF 具體買賣下單指令")
 
-st.caption("💡 **風控門檻提示**：若調整金額低於 NT$ 30,000 元，系統會自動認定為「續抱觀望」，避免頻繁小額交易產生過多摩擦成本。")
+col_chart, col_table = st.columns([1, 1.2])
+
+with col_chart:
+    df_pie = pd.DataFrame({
+        "類別": list(target_weights.keys()),
+        "比例": [v * 100 for v in target_weights.values()]
+    })
+    fig = px.pie(
+        df_pie,
+        values="比例",
+        names="類別",
+        title="AI 當日最佳資產權重圖",
+        hole=0.4,
+        color_discrete_sequence=["#FF4B4B", "#FF8585", "#00C04D", "#20E070", "#1C83E1", "#CCCCCC"]
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+with col_table:
+    st.dataframe(
+        df_trade.style.format({
+            "目前持股金額": "NT$ {:,.0f}",
+            "AI 目標金額": "NT$ {:,.0f}",
+            "建議調倉金額": "NT$ {:,.0f}"
+        }),
+        use_container_width=True
+    )
+    st.caption("💡 **下單說明**：若調倉金額未滿 NT$ 30,000 元，系統會自動認定為「續抱觀望」，以節省手續費與證交稅。")
