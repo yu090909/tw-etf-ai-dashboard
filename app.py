@@ -8,14 +8,14 @@ import yfinance as yf
 # 1. 頁面基本配置
 # ==========================================
 st.set_page_config(
-    page_title="銘傳金融科技盃 - 5大核心台股 ETF AI 交易儀表板",
+    page_title="銘傳金融科技盃 - 7大精選台股 ETF AI 交易儀表板",
     page_icon="📈",
     layout="wide",
 )
 
-st.title("🏆 銘傳金融科技盃 - 5 大核心 ETF 每日 Rebalancing 決策系統")
+st.title("🏆 銘傳金融科技盃 - 7 大精選 ETF 每日 Rebalancing 決策系統")
 st.caption(
-    "精選 5 檔主力 ETF (0050 / 00881 / 00713 / 00919 / 00679B) | 當日具體買賣張數試算"
+    "精選 7 檔核心 ETF (0050 / 0052 / 00881 / 00981A / 00713 / 00919 / 00679B) | 當日具體買賣張數試算"
 )
 st.markdown("---")
 
@@ -54,28 +54,47 @@ discount_rate = st.sidebar.slider(
 )
 
 # ==========================================
-# 3. 主頁面：輸入帳戶當前實際庫存
+# 3. 主頁面：輸入帳戶當前實際庫存 (雙排佈局)
 # ==========================================
 st.markdown("### 💼 請輸入目前團隊「實際帳戶庫存」")
 st.caption("填入今日帳戶內的現金餘額與各檔 ETF 當前市值 (未持有填 0)。")
 
-col_cash, col_h1, col_h2, col_h3, col_h4, col_h5 = st.columns(6)
-with col_cash:
+r1_col1, r1_col2, r1_col3, r1_col4 = st.columns(4)
+with r1_col1:
     cur_cash = st.number_input(
         "現金餘額 (元)", value=10000000, step=100000
     )
-with col_h1:
-    cur_0050 = st.number_input("0050 現有市值", value=0, step=50000)
-with col_h2:
-    cur_00881 = st.number_input("00881 現有市值", value=0, step=50000)
-with col_h3:
-    cur_00713 = st.number_input("00713 現有市值", value=0, step=50000)
-with col_h4:
-    cur_00919 = st.number_input("00919 現有市值", value=0, step=50000)
-with col_h5:
-    cur_00679b = st.number_input("00679B 現有市值", value=0, step=50000)
+with r1_col2:
+    cur_0050 = st.number_input("0050 (台灣50) 市值", value=0, step=50000)
+with r1_col3:
+    cur_0052 = st.number_input("0052 (富邦科技) 市值", value=0, step=50000)
+with r1_col4:
+    cur_00881 = st.number_input("00881 (國泰5G+) 市值", value=0, step=50000)
 
-nav = cur_cash + cur_0050 + cur_00881 + cur_00713 + cur_00919 + cur_00679b
+r2_col1, r2_col2, r2_col3, r2_col4 = st.columns(4)
+with r2_col1:
+    cur_00981a = st.number_input(
+        "00981A (主動統一) 市值", value=0, step=50000
+    )
+with r2_col2:
+    cur_00713 = st.number_input("00713 (高息低波) 市值", value=0, step=50000)
+with r2_col3:
+    cur_00919 = st.number_input("00919 (精選高息) 市值", value=0, step=50000)
+with r2_col4:
+    cur_00679b = st.number_input(
+        "00679B (美債20年) 市值", value=0, step=50000
+    )
+
+nav = (
+    cur_cash
+    + cur_0050
+    + cur_0052
+    + cur_00881
+    + cur_00981a
+    + cur_00713
+    + cur_00919
+    + cur_00679b
+)
 st.info(f"💰 **目前總資產淨值 (NAV)**：NT$ {nav:,.0f} 元")
 st.markdown("---")
 
@@ -97,10 +116,12 @@ if total_score >= 75:
     status = "【強勢多頭】全面偏多攻擊"
     status_color = "red"
     base_weights = {
-        "0050": 0.30,
-        "00881": 0.25,
-        "00713": 0.15,
-        "00919": 0.10,
+        "0050": 0.20,
+        "0052": 0.20,
+        "00881": 0.15,
+        "00981A": 0.15,
+        "00713": 0.10,
+        "00919": 0.00,
         "00679B": 0.00,
     }
 elif total_score <= 40:
@@ -108,7 +129,9 @@ elif total_score <= 40:
     status_color = "green"
     base_weights = {
         "0050": 0.05,
+        "0052": 0.00,
         "00881": 0.00,
+        "00981A": 0.00,
         "00713": 0.20,
         "00919": 0.10,
         "00679B": 0.15,
@@ -117,10 +140,12 @@ else:
     status = "【震盪整理】高股息防禦避險"
     status_color = "orange"
     base_weights = {
-        "0050": 0.15,
+        "0050": 0.10,
+        "0052": 0.10,
         "00881": 0.10,
-        "00713": 0.25,
-        "00919": 0.20,
+        "00981A": 0.10,
+        "00713": 0.20,
+        "00919": 0.10,
         "00679B": 0.00,
     }
 
@@ -138,7 +163,9 @@ target_weights["現金"] = 1.0 - sum(target_weights.values())
 # ==========================================
 etf_tickers = {
     "0050": "0050.TW",
+    "0052": "0052.TW",
     "00881": "00881.TW",
+    "00981A": "00981A.TW",
     "00713": "00713.TW",
     "00919": "00919.TW",
     "00679B": "00679B.TWO",
@@ -151,7 +178,6 @@ def get_latest_prices():
     prices = {}
 
     try:
-        # 批次下載近 5 天數據，防範國定假日或休市抓無資料
         df = yf.download(tickers_list, period="5d", progress=False)
 
         if "Close" in df:
@@ -159,7 +185,6 @@ def get_latest_prices():
         else:
             df_close = df
 
-        # 前值與後值補齊（解決不同標的收盤時間落差）
         df_close = df_close.ffill().bfill()
 
         for code, ticker in etf_tickers.items():
@@ -169,10 +194,12 @@ def get_latest_prices():
             else:
                 prices[code] = 100.0
     except Exception as e:
-        # 遇 API 連線異常時的動態市價備援
+        # 備援參考價
         prices = {
             "0050": 195.0,
+            "0052": 64.5,
             "00881": 27.0,
+            "00981A": 29.5,
             "00713": 58.0,
             "00919": 24.5,
             "00679B": 30.0,
@@ -183,7 +210,9 @@ def get_latest_prices():
 latest_prices = get_latest_prices()
 current_holdings = {
     "0050": cur_0050,
+    "0052": cur_0052,
     "00881": cur_00881,
+    "00981A": cur_00981a,
     "00713": cur_00713,
     "00919": cur_00919,
     "00679B": cur_00679b,
@@ -241,7 +270,7 @@ with col_m3:
     else:
         st.info("ℹ️ 折溢價處於正常合理區間")
 
-st.markdown("### 🎯 今日 5 大核心 ETF 具體買賣下單指令")
+st.markdown("### 🎯 今日 7 大精選 ETF 具體買賣下單指令")
 
 col_chart, col_table = st.columns([1, 1.2])
 
@@ -258,7 +287,9 @@ with col_chart:
         hole=0.4,
         color_discrete_sequence=[
             "#FF4B4B",
+            "#FF6B6B",
             "#FF8585",
+            "#FFA07A",
             "#00C04D",
             "#20E070",
             "#1C83E1",
