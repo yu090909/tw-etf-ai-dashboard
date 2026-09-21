@@ -124,7 +124,7 @@ st.markdown("---")
 st.markdown("### 📈 參賽標的近一個月即時行情監測")
 
 
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=60)
 def load_etf_data():
     tickers = ["0050.TW", "0056.TW", "00878.TW", "00881.TW", "00713.TW"]
     df = yf.download(tickers, period="1mo")["Close"]
