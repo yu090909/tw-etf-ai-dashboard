@@ -4,7 +4,9 @@ import plotly.express as px
 import streamlit as st
 import yfinance as yf
 
-# 頁面配置
+# ==========================================
+# 1. 頁面基本配置
+# ==========================================
 st.set_page_config(
     page_title="銘傳金融科技盃 - 台股 ETF AI 量化觀測儀表板",
     page_icon="📈",
@@ -13,13 +15,32 @@ st.set_page_config(
 
 st.title("🏆 銘傳金融科技盃 - 台股 ETF AI 資金配置儀表板")
 st.caption(
-    "起始資金：NT$ 10,000,000 | 專為 6 個月實戰競賽打造的多因子動態模型"
+    "起始資金：NT$ 10,000,000 | 具備「分批建倉」與「動態現金避險」的 6 個月競賽模型"
 )
 st.markdown("---")
 
-# 側邊欄：台股指標控制面板
-st.sidebar.header("⚙️ 今日台股在地數據輸入")
+# ==========================================
+# 2. 側邊欄：控制面板與半年度風控設定
+# ==========================================
+st.sidebar.header("⚙️ 1. 比賽階段與風控設定")
 
+build_phase = st.sidebar.selectbox(
+    "選擇目前比賽建倉階段",
+    [
+        "第 1 階段：試探開局 (持股上限 30%)",
+        "第 2 階段：波段建倉 (持股上限 60%)",
+        "第 3 階段：完全佈局 (最高持股 80%，保留 20% 防禦現金)",
+    ],
+)
+
+# 風控對應持股上限
+phase_max_exposure = {
+    "第 1 階段：試探開局 (持股上限 30%)": 0.30,
+    "第 2 階段：波段建倉 (持股上限 60%)": 0.60,
+    "第 3 階段：完全佈局 (最高持股 80%，保留 20% 防禦現金)": 0.80,
+}[build_phase]
+
+st.sidebar.header("⚙️ 2. 今日台股在地數據")
 taiex_close = st.sidebar.number_input(
     "加權指數收盤價", value=22500, step=50
 )
@@ -34,9 +55,13 @@ discount_rate = st.sidebar.slider(
     "目標 ETF 折溢價率 (%)", -2.0, 2.0, 0.2, step=0.1
 )
 
-# AI 模型計算邏輯
+# ==========================================
+# 3. AI 多因子綜合打分邏輯
+# ==========================================
+# 技術面分數 (0 - 40)
 taiex_score = 40 if taiex_close > taiex_ma20 else 10
 
+# 期貨籌碼分數 (0 - 30)
 if foreign_futures_oi > 10000:
     futures_score = 30
 elif foreign_futures_oi < -10000:
@@ -44,6 +69,7 @@ elif foreign_futures_oi < -10000:
 else:
     futures_score = 15
 
+# 選擇權情緒分數 (0 - 30)
 if pc_ratio >= 110:
     option_score = 30
 elif pc_ratio <= 85:
@@ -53,28 +79,45 @@ else:
 
 total_score = taiex_score + futures_score + option_score
 
-# 分數判定與策略
+# ==========================================
+# 4. 風控與資金動態調配算牌器
+# ==========================================
 if total_score >= 75:
-    status = "【強勢多頭】全面偏多攻擊"
+    status = "【強勢多頭】偏多操作 (動態加碼)"
     status_color = "red"
-    tech_w, div_w, cash_w = 0.65, 0.25, 0.10
+    target_tech_ratio = 0.50
+    target_div_ratio = 0.30
 elif total_score <= 40:
-    status = "【空頭防禦】縮減持股保住勝果"
+    status = "【空頭防禦】縮減風險部位 (提高現金)"
     status_color = "green"
-    tech_w, div_w, cash_w = 0.15, 0.45, 0.40
+    target_tech_ratio = 0.10
+    target_div_ratio = 0.30
 else:
-    status = "【震盪整理】區間操作，高股息避險"
+    status = "【震盪整理】區間操作 (高股息避險)"
     status_color = "orange"
-    tech_w, div_w, cash_w = 0.35, 0.45, 0.20
+    target_tech_ratio = 0.30
+    target_div_ratio = 0.40
+
+# 強制風控限制：持股不得超過當前階段上限
+raw_stock_ratio = target_tech_ratio + target_div_ratio
+actual_stock_ratio = min(raw_stock_ratio, phase_max_exposure)
+
+# 依比例重新等比分配
+scale_factor = (
+    actual_stock_ratio / raw_stock_ratio if raw_stock_ratio > 0 else 0
+)
+tech_w = target_tech_ratio * scale_factor
+div_w = target_div_ratio * scale_factor
+cash_w = 1.0 - tech_w - div_w  # 剩餘資金全部強制作為防禦現金池
 
 capital = 10000000
 allocation_data = {
     "資產類別": [
-        "科技攻擊型 (0050/00881)",
-        "高股息防禦型 (0056/00713/00878)",
-        "避險型 (00679B/現金)",
+        "科技/大盤攻擊型 (0050/00881)",
+        "高股息/低波防禦型 (0056/00713/00878)",
+        "防禦現金池 / 債券 (00679B)",
     ],
-    "配置金額 (NT$)": [
+    "建議金額 (NT$)": [
         capital * tech_w,
         capital * div_w,
         capital * cash_w,
@@ -83,45 +126,57 @@ allocation_data = {
 }
 df_alloc = pd.DataFrame(allocation_data)
 
-# 主要儀表板區域
+# ==========================================
+# 5. 儀表板主要視覺化呈現
+# ==========================================
 col1, col2, col3 = st.columns(3)
 with col1:
-    st.metric("台股 AI 綜合分數", f"{total_score} / 100")
+    st.metric("台股 AI 綜合多空分數", f"{total_score} / 100")
 with col2:
     st.subheader(f":{status_color}[{status}]")
+    st.caption(
+        f"風控限制：目前階段最高持股上限為 {phase_max_exposure*100:.0f}%"
+    )
 with col3:
     if discount_rate > 0.8:
-        st.error(f"⚠️ 警示：溢價過高 ({discount_rate}%)，暫緩追高！")
+        st.error(f"⚠️ 風控警示：溢價過高 ({discount_rate}%)，暫緩追高！")
     elif discount_rate < -0.5:
-        st.success(f"💡 訊號：折價 ({discount_rate}%)，出現抄底空間！")
+        st.success(
+            f"💡 套利訊號：出現折價 ({discount_rate}%)，具備錯殺抄底空間！"
+        )
     else:
-        st.info("ℹ️ 折溢價處於正常合理區間")
+        st.info("ℹ️ 折溢價處於合理安全區間")
 
-st.markdown("### 📊 1,000 萬資金最佳配置比例")
+st.markdown("### 📊 1,000 萬資金動態配置建議")
 
 col_chart, col_table = st.columns([1, 1])
 
 with col_chart:
     fig = px.pie(
         df_alloc,
-        values="配置金額 (NT$)",
+        values="建議金額 (NT$)",
         names="資產類別",
-        title="AI 資產配置圓餅圖",
+        title="AI 風控資金配置圖",
         hole=0.4,
+        color_discrete_sequence=["#FF4B4B", "#00C04D", "#1C83E1"],
     )
     st.plotly_chart(fig, use_container_width=True)
 
 with col_table:
-    st.markdown("#### 具體下單金額建議")
+    st.markdown("#### 具體下單金額與權重")
     st.dataframe(
         df_alloc.style.format(
-            {"配置金額 (NT$)": "NT$ {:,.0f}", "配置比例 (%)": "{:.0f}%"}
+            {"建議金額 (NT$)": "NT$ {:,.0f}", "配置比例 (%)": "{:.1f}%"}
         ),
         use_container_width=True,
     )
+    st.caption(
+        "💡 單一標的風控提醒：建議任意單一 ETF 持股金額請勿超過總資金 35%（即 NT$"
+        " 3,500,000）。"
+    )
 
 st.markdown("---")
-st.markdown("### 📈 參賽標的近一個月即時行情監測")
+st.markdown("### 📈 競賽核心標的行情監測 (60秒刷新)")
 
 
 @st.cache_data(ttl=60)
@@ -135,4 +190,4 @@ try:
     etf_prices = load_etf_data()
     st.line_chart(etf_prices)
 except Exception as e:
-    st.warning("即時行情抓取中或市場已收盤。")
+    st.warning("即時行情抓取中，若非開盤時間將顯示最後收盤歷史行情。")
