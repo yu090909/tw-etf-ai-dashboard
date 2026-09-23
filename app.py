@@ -1,26 +1,7 @@
-import concurrent.futures
-import feedparser
-import google.generativeai as genai
 import pandas as pd
 import plotly.express as px
-import requests
 import streamlit as st
 import yfinance as yf
-
-# ==========================================
-# 0. 萬無一失的「硬性超時」保護機制
-# ==========================================
-
-
-def safe_run_with_timeout(func, timeout_sec=3, default_return=None, *args, **kwargs):
-  """強制讓任何網路函式在指定秒數內回傳，超時立刻中斷並回傳預設值，防止網頁卡死"""
-  with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-    future = executor.submit(func, *args, **kwargs)
-    try:
-      return future.result(timeout=timeout_sec)
-    except Exception:
-      return default_return
-
 
 # ==========================================
 # 1. 頁面基本配置
@@ -34,12 +15,12 @@ st.set_page_config(
 st.title("🏆 銘傳金融科技盃 - 7 大精選 ETF 每日 Rebalancing 決策系統")
 st.caption(
     "精選 7 檔核心 ETF (0050 / 0052 / 00881 / 00981A / 00713 / 00919 / 00679B)"
-    " | 融合新聞面 NLP + 籌碼面 + 技術面"
+    " | 融合籌碼面 + 技術面多因子分析"
 )
 st.markdown("---")
 
 # ==========================================
-# 2. 側邊欄：風控、籌碼指標與 Gemini API Key
+# 2. 側邊欄：風控與籌碼指標設定
 # ==========================================
 st.sidebar.header("⚙️ 1. 比賽進度與持股風控")
 build_phase = st.sidebar.selectbox(
@@ -73,96 +54,8 @@ discount_rate = st.sidebar.slider(
     "目標 ETF 折溢價率 (%)", -2.0, 2.0, -0.5, step=0.1
 )
 
-st.sidebar.header("🤖 3. AI 新聞分析設定")
-try:
-  default_key = st.secrets.get("GEMINI_API_KEY", "")
-except Exception:
-  default_key = ""
-
-gemini_api_key = st.sidebar.text_input(
-    "Gemini API Key (Secrets 有設定時可留空)",
-    value=default_key,
-    type="password",
-)
-
-
 # ==========================================
-# 3. 📰 新聞即時抓取與情緒分析模組 (帶硬性 3 秒超時)
-# ==========================================
-def _raw_fetch_news_and_ai(api_key):
-  headlines = [
-      "台股半導體ETF交投熱絡，市場關注台積電最新季報與展望",
-      "外資期貨空單維持高位，法人建議短線採取高股息防禦配置",
-      "美股科技股震盪整理，台股加權指數於月線上力求站穩",
-      "聯準會降息預期推升美債ETF，避險資金持續流入",
-      "高股息ETF再吹除息風潮，投資人趁折價佈局領息",
-  ]
-  status_msg = "已載入備用新聞數據"
-
-  # 1. 嘗試抓取 RSS
-  try:
-    rss_url = "https://news.google.com/rss/search?q=%E5%8F%B0%E8%82%A1+%E5%8D%8A%E5%B0%8E%E9%AB%94+ETF&hl=zh-TW&gl=TW&ceid=TW:zh-Hant"
-    headers = {
-        "User-Agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-        )
-    }
-    resp = requests.get(rss_url, headers=headers, timeout=2)
-    feed = feedparser.parse(resp.content)
-    fetched = [
-        entry.title for entry in feed.entries if hasattr(entry, "title")
-    ]
-    if fetched:
-      headlines = fetched[:5]
-      status_msg = "已成功即時抓取財經新聞"
-  except Exception:
-    pass
-
-  # 2. 無 API Key
-  if not api_key:
-    return 50, headlines, f"{status_msg}（未設定 API Key，採用預設 50 分）"
-
-  # 3. Gemini 打分
-  try:
-    genai.configure(api_key=api_key)
-    model = genai.GenerativeModel("gemini-1.5-flash")
-    news_text = "\n".join([f"- {h}" for h in headlines])
-    prompt = f"閱讀以下台股新聞並評估市場情緒，只回傳一個 0-100 的整數數字：\n{news_text}"
-    response = model.generate_content(prompt)
-    score = int(response.text.strip())
-    return score, headlines, f"{status_msg}（Gemini AI 分析完成）"
-  except Exception:
-    return 50, headlines, f"{status_msg}（AI 分析逾時，自動採用中立 50 分）"
-
-
-@st.cache_data(ttl=1800)
-def get_news_sentiment(api_key=""):
-  default_val = (
-      50,
-      [
-          "台股半導體ETF交投熱絡，市場關注台積電最新季報與展望",
-          "外資期貨空單維持高位，法人建議短線採取高股息防禦配置",
-          "美股科技股震盪整理，台股加權指數於月線上力求站穩",
-          "聯準會降息預期推升美債ETF，避險資金持續流入",
-          "高股息ETF再吹除息風潮，投資人趁折價佈局領息",
-      ],
-      "雲端網路回應過慢，系統已自動啟用秒開安全機制",
-  )
-  # 硬性限制整個新聞+AI流程最多只能跑 3 秒，超過直接放棄
-  return safe_run_with_timeout(
-      _raw_fetch_news_and_ai,
-      timeout_sec=3,
-      default_return=default_val,
-      api_key=api_key,
-  )
-
-
-news_score, news_headlines, news_status_msg = get_news_sentiment(
-    gemini_api_key
-)
-
-# ==========================================
-# 4. 主頁面：輸入帳戶當前實際庫存
+# 3. 主頁面：輸入帳戶當前實際庫存
 # ==========================================
 st.markdown("### 💼 請輸入目前團隊「實際帳戶庫存」")
 st.caption("填入今日帳戶內的現金餘額與各檔 ETF 當前市值 (未持有填 0)。")
@@ -207,20 +100,24 @@ st.info(f"💰 **目前總資產淨值 (NAV)**：NT$ {nav:,.0f} 元")
 st.markdown("---")
 
 # ==========================================
-# 5. 多因子 AI 打分模型
+# 4. 多因子打分模型 (配分重新權重，總分 100 分)
 # ==========================================
-taiex_score = 30 if taiex_close > taiex_ma20 else 10
+# 1. 大盤 MA20 技術面 (40分)
+taiex_score = 40 if taiex_close > taiex_ma20 else 10
+
+# 2. 外資期貨籌碼面 (30分)
 futures_score = (
-    25
+    30
     if foreign_futures_oi > 10000
-    else (0 if foreign_futures_oi < -10000 else 12)
+    else (0 if foreign_futures_oi < -10000 else 15)
 )
-option_score = 25 if pc_ratio >= 110 else (5 if pc_ratio <= 85 else 15)
-news_weighted_score = int(news_score * 0.2)
 
-total_score = taiex_score + futures_score + option_score + news_weighted_score
+# 3. 選擇權 Put/Call Ratio (30分)
+option_score = 30 if pc_ratio >= 110 else (5 if pc_ratio <= 85 else 15)
 
-if total_score >= 75:
+total_score = taiex_score + futures_score + option_score
+
+if total_score >= 70:
   status = "【強勢多頭】全面偏多攻擊"
   status_color = "red"
   base_weights = {
@@ -232,7 +129,7 @@ if total_score >= 75:
       "00919": 0.00,
       "00679B": 0.00,
   }
-elif total_score <= 45:
+elif total_score <= 40:
   status = "【空頭防禦】減碼保住勝果"
   status_color = "green"
   base_weights = {
@@ -257,6 +154,7 @@ else:
       "00679B": 0.00,
   }
 
+# 根據建倉階段進行風控放縮
 total_stock_w = sum(base_weights.values())
 if total_stock_w > phase_max_exposure:
   scale = phase_max_exposure / total_stock_w
@@ -267,7 +165,7 @@ else:
 target_weights["現金"] = 1.0 - sum(target_weights.values())
 
 # ==========================================
-# 6. 抓取最新股價引擎 (帶硬性 3 秒超時)
+# 5. 抓取最新股價引擎 (帶防死鎖機制)
 # ==========================================
 etf_tickers = {
     "0050": "0050.TW",
@@ -280,24 +178,9 @@ etf_tickers = {
 }
 
 
-def _raw_get_prices():
-  tickers_list = list(etf_tickers.values())
-  prices = {}
-  df = yf.download(tickers_list, period="5d", progress=False)
-  df_close = df["Close"] if "Close" in df else df
-  df_close = df_close.ffill().bfill()
-
-  for code, ticker in etf_tickers.items():
-    if ticker in df_close.columns:
-      prices[code] = float(df_close[ticker].dropna().iloc[-1])
-    else:
-      prices[code] = 100.0
-  return prices
-
-
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=300)
 def get_latest_prices():
-  default_prices = {
+  prices = {
       "0050": 195.0,
       "0052": 64.55,
       "00881": 27.0,
@@ -306,9 +189,21 @@ def get_latest_prices():
       "00919": 24.5,
       "00679B": 30.0,
   }
-  return safe_run_with_timeout(
-      _raw_get_prices, timeout_sec=3, default_return=default_prices
-  )
+  try:
+    df = yf.download(
+        list(etf_tickers.values()), period="5d", progress=False, timeout=2
+    )
+    df_close = df["Close"] if "Close" in df else df
+    df_close = df_close.ffill().bfill()
+
+    for code, ticker in etf_tickers.items():
+      if ticker in df_close.columns:
+        val = float(df_close[ticker].dropna().iloc[-1])
+        if val > 0:
+          prices[code] = val
+  except Exception:
+    pass
+  return prices
 
 
 latest_prices = get_latest_prices()
@@ -323,7 +218,7 @@ current_holdings = {
 }
 
 trade_suggestions = []
-threshold = 30000
+threshold = 30000  # 調倉門檻 3 萬元
 
 for code, price in latest_prices.items():
   target_amt = nav * target_weights.get(code, 0.0)
@@ -356,7 +251,7 @@ for code, price in latest_prices.items():
 df_trade = pd.DataFrame(trade_suggestions)
 
 # ==========================================
-# 7. 視覺化儀表板呈現
+# 6. 視覺化儀表板呈現
 # ==========================================
 col_m1, col_m2, col_m3 = st.columns(3)
 with col_m1:
@@ -373,14 +268,6 @@ with col_m3:
     st.success(f"💡 訊號：折價 {discount_rate}%，出現錯殺抄底空間！")
   else:
     st.info("ℹ️ 折溢價處於正常合理區間")
-
-# 新聞區塊
-with st.expander("📰 查看最新財經新聞與 AI 語意情緒評分", expanded=True):
-  st.caption(f"系統狀態：{news_status_msg}")
-  st.write(f"**新聞情緒原始得分**：`{news_score} / 100`")
-  st.write("**即時頭條資訊：**")
-  for h in news_headlines:
-    st.write(f"- {h}")
 
 st.markdown("---")
 st.markdown("### 🎯 今日 7 大精選 ETF 具體買賣下單指令")
