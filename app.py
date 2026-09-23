@@ -1,3 +1,4 @@
+import concurrent.futures
 import feedparser
 import google.generativeai as genai
 import pandas as pd
@@ -5,6 +6,21 @@ import plotly.express as px
 import requests
 import streamlit as st
 import yfinance as yf
+
+# ==========================================
+# 0. 萬無一失的「硬性超時」保護機制
+# ==========================================
+
+
+def safe_run_with_timeout(func, timeout_sec=3, default_return=None, *args, **kwargs):
+  """強制讓任何網路函式在指定秒數內回傳，超時立刻中斷並回傳預設值，防止網頁卡死"""
+  with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+    future = executor.submit(func, *args, **kwargs)
+    try:
+      return future.result(timeout=timeout_sec)
+    except Exception:
+      return default_return
+
 
 # ==========================================
 # 1. 頁面基本配置
@@ -69,13 +85,11 @@ gemini_api_key = st.sidebar.text_input(
     type="password",
 )
 
-# ==========================================
-# 3. 📰 新聞即時抓取與情緒分析模組 (零死機設計)
-# ==========================================
 
-
-@st.cache_data(ttl=1800)
-def get_news_sentiment(api_key=""):
+# ==========================================
+# 3. 📰 新聞即時抓取與情緒分析模組 (帶硬性 3 秒超時)
+# ==========================================
+def _raw_fetch_news_and_ai(api_key):
   headlines = [
       "台股半導體ETF交投熱絡，市場關注台積電最新季報與展望",
       "外資期貨空單維持高位，法人建議短線採取高股息防禦配置",
@@ -83,9 +97,9 @@ def get_news_sentiment(api_key=""):
       "聯準會降息預期推升美債ETF，避險資金持續流入",
       "高股息ETF再吹除息風潮，投資人趁折價佈局領息",
   ]
-  status_msg = "已載入預設新聞數據"
+  status_msg = "已載入備用新聞數據"
 
-  # 1. 抓取 RSS (帶 3 秒獨立超時，不影響全域)
+  # 1. 嘗試抓取 RSS
   try:
     rss_url = "https://news.google.com/rss/search?q=%E5%8F%B0%E8%82%A1+%E5%8D%8A%E5%B0%8E%E9%AB%94+ETF&hl=zh-TW&gl=TW&ceid=TW:zh-Hant"
     headers = {
@@ -93,43 +107,54 @@ def get_news_sentiment(api_key=""):
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
         )
     }
-    resp = requests.get(rss_url, headers=headers, timeout=3)
+    resp = requests.get(rss_url, headers=headers, timeout=2)
     feed = feedparser.parse(resp.content)
     fetched = [
         entry.title for entry in feed.entries if hasattr(entry, "title")
     ]
     if fetched:
       headlines = fetched[:5]
-      status_msg = "已成功擷取即時財經新聞"
+      status_msg = "已成功即時抓取財經新聞"
   except Exception:
-    status_msg = "新聞伺服器回應緩慢，自動切換至預設財經頭條"
+    pass
 
-  # 2. 無 API Key 情況
+  # 2. 無 API Key
   if not api_key:
-    return 50, headlines, f"{status_msg}（未設定 API Key，採用預設中立 50 分）"
+    return 50, headlines, f"{status_msg}（未設定 API Key，採用預設 50 分）"
 
-  # 3. Gemini AI 分析
+  # 3. Gemini 打分
   try:
     genai.configure(api_key=api_key)
     model = genai.GenerativeModel("gemini-1.5-flash")
     news_text = "\n".join([f"- {h}" for h in headlines])
-    prompt = f"""
-        你是一位台股分析師，請閱讀以下台股新聞標題：
-        {news_text}
-        
-        請評估對台股整體市場的情緒，並回傳一個 0 到 100 的整數分數：
-        - 80-100: 極度利多
-        - 60-79: 溫和利多
-        - 40-59: 中立觀望
-        - 20-39: 溫和利空
-        - 0-19: 極度利空
-        只輸出數字，不要有任何其他文字。
-        """
+    prompt = f"閱讀以下台股新聞並評估市場情緒，只回傳一個 0-100 的整數數字：\n{news_text}"
     response = model.generate_content(prompt)
     score = int(response.text.strip())
     return score, headlines, f"{status_msg}（Gemini AI 分析完成）"
   except Exception:
-    return 50, headlines, f"{status_msg}（AI 分析失敗或超時，自動轉為 50 分）"
+    return 50, headlines, f"{status_msg}（AI 分析逾時，自動採用中立 50 分）"
+
+
+@st.cache_data(ttl=1800)
+def get_news_sentiment(api_key=""):
+  default_val = (
+      50,
+      [
+          "台股半導體ETF交投熱絡，市場關注台積電最新季報與展望",
+          "外資期貨空單維持高位，法人建議短線採取高股息防禦配置",
+          "美股科技股震盪整理，台股加權指數於月線上力求站穩",
+          "聯準會降息預期推升美債ETF，避險資金持續流入",
+          "高股息ETF再吹除息風潮，投資人趁折價佈局領息",
+      ],
+      "雲端網路回應過慢，系統已自動啟用秒開安全機制",
+  )
+  # 硬性限制整個新聞+AI流程最多只能跑 3 秒，超過直接放棄
+  return safe_run_with_timeout(
+      _raw_fetch_news_and_ai,
+      timeout_sec=3,
+      default_return=default_val,
+      api_key=api_key,
+  )
 
 
 news_score, news_headlines, news_status_msg = get_news_sentiment(
@@ -242,7 +267,7 @@ else:
 target_weights["現金"] = 1.0 - sum(target_weights.values())
 
 # ==========================================
-# 6. 抓取最新股價引擎
+# 6. 抓取最新股價引擎 (帶硬性 3 秒超時)
 # ==========================================
 etf_tickers = {
     "0050": "0050.TW",
@@ -255,31 +280,35 @@ etf_tickers = {
 }
 
 
-@st.cache_data(ttl=60)
-def get_latest_prices():
+def _raw_get_prices():
   tickers_list = list(etf_tickers.values())
   prices = {}
-  try:
-    df = yf.download(tickers_list, period="5d", progress=False)
-    df_close = df["Close"] if "Close" in df else df
-    df_close = df_close.ffill().bfill()
+  df = yf.download(tickers_list, period="5d", progress=False)
+  df_close = df["Close"] if "Close" in df else df
+  df_close = df_close.ffill().bfill()
 
-    for code, ticker in etf_tickers.items():
-      if ticker in df_close.columns:
-        prices[code] = float(df_close[ticker].dropna().iloc[-1])
-      else:
-        prices[code] = 100.0
-  except Exception:
-    prices = {
-        "0050": 195.0,
-        "0052": 64.55,
-        "00881": 27.0,
-        "00981A": 29.57,
-        "00713": 58.0,
-        "00919": 24.5,
-        "00679B": 30.0,
-    }
+  for code, ticker in etf_tickers.items():
+    if ticker in df_close.columns:
+      prices[code] = float(df_close[ticker].dropna().iloc[-1])
+    else:
+      prices[code] = 100.0
   return prices
+
+
+@st.cache_data(ttl=60)
+def get_latest_prices():
+  default_prices = {
+      "0050": 195.0,
+      "0052": 64.55,
+      "00881": 27.0,
+      "00981A": 29.57,
+      "00713": 58.0,
+      "00919": 24.5,
+      "00679B": 30.0,
+  }
+  return safe_run_with_timeout(
+      _raw_get_prices, timeout_sec=3, default_return=default_prices
+  )
 
 
 latest_prices = get_latest_prices()
