@@ -5,3 +5,4 @@ plotly
 yfinance
 feedparser
 google-generativeai
+requests
