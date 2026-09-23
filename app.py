@@ -1,15 +1,10 @@
-import socket
 import feedparser
 import google.generativeai as genai
-import numpy as np
 import pandas as pd
 import plotly.express as px
 import requests
 import streamlit as st
 import yfinance as yf
-
-# 設定全域網路連線超時為 3 秒
-socket.setdefaulttimeout(3)
 
 # ==========================================
 # 1. 頁面基本配置
@@ -54,7 +49,6 @@ taiex_ma20 = st.sidebar.number_input(
     "加權指數月線 (MA20)", value=46450.0, step=50.0
 )
 
-# 擴充至 ±100,000 口以支援外資極端避險狀況
 foreign_futures_oi = st.sidebar.slider(
     "外資期貨淨多空單 (口)", -100000, 100000, -75568, step=1000
 )
@@ -76,42 +70,45 @@ gemini_api_key = st.sidebar.text_input(
 )
 
 # ==========================================
-# 3. 📰 新聞即時抓取與情緒分析模組 (秒開不卡死版)
+# 3. 📰 新聞即時抓取與情緒分析模組 (零死機設計)
 # ==========================================
 
 
-@st.cache_data(ttl=1800, show_spinner=False)
+@st.cache_data(ttl=1800)
 def get_news_sentiment(api_key=""):
-  headlines = []
-  rss_url = "https://news.google.com/rss/search?q=%E5%8F%B0%E8%82%A1+%E5%8D%8A%E5%B0%8E%E9%AB%94+ETF&hl=zh-TW&gl=TW&ceid=TW:zh-Hant"
+  headlines = [
+      "台股半導體ETF交投熱絡，市場關注台積電最新季報與展望",
+      "外資期貨空單維持高位，法人建議短線採取高股息防禦配置",
+      "美股科技股震盪整理，台股加權指數於月線上力求站穩",
+      "聯準會降息預期推升美債ETF，避險資金持續流入",
+      "高股息ETF再吹除息風潮，投資人趁折價佈局領息",
+  ]
+  status_msg = "已載入預設新聞數據"
 
-  # 1. 抓取新聞標題 (極速 2 秒超時)
+  # 1. 抓取 RSS (帶 3 秒獨立超時，不影響全域)
   try:
+    rss_url = "https://news.google.com/rss/search?q=%E5%8F%B0%E8%82%A1+%E5%8D%8A%E5%B0%8E%E9%AB%94+ETF&hl=zh-TW&gl=TW&ceid=TW:zh-Hant"
     headers = {
         "User-Agent": (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
         )
     }
-    resp = requests.get(rss_url, headers=headers, timeout=2)
+    resp = requests.get(rss_url, headers=headers, timeout=3)
     feed = feedparser.parse(resp.content)
-    headlines = [entry.title for entry in feed.entries[:5]]
-  except Exception:
-    headlines = [
-        "台股半導體ETF交投熱絡，市場關注台積電最新季報與展望",
-        "外資期貨空單維持高位，法人建議短線採取高股息防禦配置",
-        "美股科技股震盪整理，台股加權指數於月線上力求站穩",
-        "聯準會降息預期推升長照美債ETF，避險資金持續流入",
-        "高股息ETF再吹除息風潮，投資人趁折價佈局領息",
+    fetched = [
+        entry.title for entry in feed.entries if hasattr(entry, "title")
     ]
+    if fetched:
+      headlines = fetched[:5]
+      status_msg = "已成功擷取即時財經新聞"
+  except Exception:
+    status_msg = "新聞伺服器回應緩慢，自動切換至預設財經頭條"
 
-  if not headlines:
-    headlines = ["市場焦點集中於科技股與整體大盤量能表現"]
-
-  # 2. 若未設定 API Key，直接回傳預設 50 分
+  # 2. 無 API Key 情況
   if not api_key:
-    return 50, headlines, "未輸入 API Key，採用市場中立評分 (50分)"
+    return 50, headlines, f"{status_msg}（未設定 API Key，採用預設中立 50 分）"
 
-  # 3. 呼叫 Gemini AI 打分 (設定強烈 3 秒超時)
+  # 3. Gemini AI 分析
   try:
     genai.configure(api_key=api_key)
     model = genai.GenerativeModel("gemini-1.5-flash")
@@ -128,14 +125,11 @@ def get_news_sentiment(api_key=""):
         - 0-19: 極度利空
         只輸出數字，不要有任何其他文字。
         """
-    # 關鍵：加上 request_options 強迫 API 3 秒內必須回應，否則立刻跳 exception
-    response = model.generate_content(
-        prompt, request_options={"timeout": 3.0}
-    )
+    response = model.generate_content(prompt)
     score = int(response.text.strip())
-    return score, headlines, "Gemini AI 新聞情緒分析成功"
+    return score, headlines, f"{status_msg}（Gemini AI 分析完成）"
   except Exception:
-    return 50, headlines, "Gemini 連線逾時，系統自動啟用備用中立評分 (50分)"
+    return 50, headlines, f"{status_msg}（AI 分析失敗或超時，自動轉為 50 分）"
 
 
 news_score, news_headlines, news_status_msg = get_news_sentiment(
@@ -261,7 +255,7 @@ etf_tickers = {
 }
 
 
-@st.cache_data(ttl=60, show_spinner=False)
+@st.cache_data(ttl=60)
 def get_latest_prices():
   tickers_list = list(etf_tickers.values())
   prices = {}
