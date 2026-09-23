@@ -1,10 +1,15 @@
+import socket
 import feedparser
 import google.generativeai as genai
 import numpy as np
 import pandas as pd
 import plotly.express as px
+import requests
 import streamlit as st
 import yfinance as yf
+
+# 設定全域網路連線超時為 5 秒，防止第三方 API 或新聞 RSS 回應過慢導致網頁無限制轉圈卡死
+socket.setdefaulttimeout(5)
 
 # ==========================================
 # 1. 頁面基本配置
@@ -66,34 +71,48 @@ except Exception:
   default_key = ""
 
 gemini_api_key = st.sidebar.text_input(
-    "Gemini API Key ( Secrets 有設定時可留空)",
+    "Gemini API Key (Secrets 有設定時可留空)",
     value=default_key,
     type="password",
 )
 
 # ==========================================
-# 3. 📰 新聞即時抓取與情緒分析模組 (NLP)
+# 3. 📰 新聞即時抓取與情緒分析模組 (含防卡死機制)
 # ==========================================
 
 
 @st.cache_data(ttl=1800)
 def get_news_sentiment(api_key=""):
   rss_url = "https://news.google.com/rss/search?q=%E5%8F%B0%E8%82%A1+%E5%8D%8A%E5%B0%8E%E9%AB%94+ETF&hl=zh-TW&gl=TW&ceid=TW:zh-Hant"
+  headlines = []
+
+  # 1. 抓取新聞標題 (加強 timeout 避免轉圈卡死)
   try:
-    feed = feedparser.parse(rss_url)
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        )
+    }
+    resp = requests.get(rss_url, headers=headers, timeout=5)
+    feed = feedparser.parse(resp.content)
     headlines = [entry.title for entry in feed.entries[:5]]
   except Exception:
-    headlines = ["暫無法抓取新聞 RSS"]
+    headlines = ["新聞伺服器回應逾時，系統已自動跳過即時新聞擷取"]
 
+  if not headlines:
+    headlines = ["暫無最新新聞資料"]
+
+  # 2. 未設定 API Key 時秒回傳中立分數
   if not api_key:
     return 50, headlines, "未偵測到 API Key，新聞情緒採用預設中立值 (50分)"
 
+  # 3. 呼叫 Gemini AI 打分
   try:
     genai.configure(api_key=api_key)
     model = genai.GenerativeModel("gemini-1.5-flash")
     news_text = "\n".join([f"- {h}" for h in headlines])
     prompt = f"""
-        你是一位台股分析師，請閱讀以下最新 5 則台股新聞標題：
+        你是一位台股分析師，請閱讀以下台股新聞標題：
         {news_text}
         
         請評估對台股整體市場的情緒，並回傳一個 0 到 100 的整數分數：
@@ -107,8 +126,8 @@ def get_news_sentiment(api_key=""):
     response = model.generate_content(prompt)
     score = int(response.text.strip())
     return score, headlines, "Gemini AI 新聞情緒分析成功運作中"
-  except Exception as e:
-    return 50, headlines, f"AI 分析異常，採用預設中立值 (50分)"
+  except Exception:
+    return 50, headlines, "AI 分析回應超時，自動切換為預設中立值 (50分)"
 
 
 news_score, news_headlines, news_status_msg = get_news_sentiment(
