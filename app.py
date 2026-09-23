@@ -43,13 +43,13 @@ phase_max_exposure = {
 
 st.sidebar.header("⚙️ 2. 今日台股在地數據")
 taiex_close = st.sidebar.number_input(
-    "加權指數收盤價", value=47800, step=50
+    "加權指數收盤價", value=47800.0, step=50.0
 )
 taiex_ma20 = st.sidebar.number_input(
-    "加權指數月線 (MA20)", value=46450, step=50
+    "加權指數月線 (MA20)", value=46450.0, step=50.0
 )
 
-# 已擴充至 ±100,000 口，適應外資極端避險行情
+# 擴充至 ±100,000 口以支援外資極端避險狀況
 foreign_futures_oi = st.sidebar.slider(
     "外資期貨淨多空單 (口)", -100000, 100000, -75568, step=1000
 )
@@ -58,9 +58,17 @@ discount_rate = st.sidebar.slider(
     "目標 ETF 折溢價率 (%)", -2.0, 2.0, -0.5, step=0.1
 )
 
-st.sidebar.header("🤖 3. AI 新聞分析設定 (選填)")
+st.sidebar.header("🤖 3. AI 新聞分析設定")
+# 優先讀取 Streamlit Secrets 中的 GEMINI_API_KEY
+try:
+  default_key = st.secrets.get("GEMINI_API_KEY", "")
+except Exception:
+  default_key = ""
+
 gemini_api_key = st.sidebar.text_input(
-    "Gemini API Key (貼上可開啟新聞 NLP)", type="password"
+    "Gemini API Key ( Secrets 有設定時可留空)",
+    value=default_key,
+    type="password",
 )
 
 # ==========================================
@@ -78,7 +86,7 @@ def get_news_sentiment(api_key=""):
     headlines = ["暫無法抓取新聞 RSS"]
 
   if not api_key:
-    return 50, headlines, "未輸入 API Key，採用預設中立值 (50分)"
+    return 50, headlines, "未偵測到 API Key，新聞情緒採用預設中立值 (50分)"
 
   try:
     genai.configure(api_key=api_key)
@@ -98,7 +106,7 @@ def get_news_sentiment(api_key=""):
         """
     response = model.generate_content(prompt)
     score = int(response.text.strip())
-    return score, headlines, "Gemini AI 新聞情緒分析完成"
+    return score, headlines, "Gemini AI 新聞情緒分析成功運作中"
   except Exception as e:
     return 50, headlines, f"AI 分析異常，採用預設中立值 (50分)"
 
@@ -332,7 +340,7 @@ with col_m3:
 
 # 新聞區塊
 with st.expander("📰 查看最新財經新聞與 AI 語意情緒評分", expanded=True):
-  st.caption(f"狀態通知：{news_status_msg}")
+  st.caption(f"系統狀態：{news_status_msg}")
   st.write(f"**新聞情緒原始得分**：`{news_score} / 100`")
   st.write("**即時擷取頭條：**")
   for h in news_headlines:
